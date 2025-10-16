@@ -2,6 +2,7 @@ var personSelector = "span[data-cvoc-protocol='orcid']";
 var personInputSelector = "input[data-cvoc-protocol='orcid']";
 var orcidPrefix = "orcid:";
 var orcidAffilPrefix = "orcid_affil:";
+var term = "";
 
 $(document).ready(function() {
     expandPeople();
@@ -168,23 +169,47 @@ function updatePeopleInputs() {
                     var $result = markMatch(item.text, term);
                     return $result;
                 },
-                templateSelection: function(item) {
-                    var pos = item.text.search(/\d{4}-\d{4}-\d{4}-\d{3}[\dX]/);
-                    var aff = null;
-                    var orcid = null;
+                templateResult: function(item) {
+                    if (item.loading) { return item.text; }
                 
-                    if (pos >= 0) {
-                        orcid = item.text.substr(pos, 19);
-                        var cached = getValue(orcidAffilPrefix, (item.id || orcid));
-                        if (cached && cached.name) aff = cached.name;
+                    var $result = markMatch(item.text, term);
                 
-                        var label = item.text.replace(orcid, "<a href='" + orcidBaseUrl + orcid + "' target='_blank'>" + orcid + "</a>");
-                        if (aff && label.indexOf(aff) === -1) {
-                            label = label + " — " + aff;
-                        }
-                        return $('<span></span>').append(label);
+                    // Prefer item.id (you set it to the ORCID) else regex fallback
+                    var orcidId = item.id || (item.text && (item.text.match(/\d{4}-\d{4}-\d{4}-\d{3}[\dX]/) || [])[0]);
+                    if (!orcidId) return $result;
+                
+                    // If cached, append immediately
+                    var cached = getValue(orcidAffilPrefix, orcidId);
+                    if (cached && cached.name) {
+                        appendAffilToNode($result, cached.name);
+                        return $result;
                     }
-                    return item.text;
+                
+                    // Avoid duplicate lookups per item
+                    if (item.__affilPending || item.__affilDone) return $result;
+                
+                    item.__affilPending = true;
+                    fetchLatestEmployment(orcidId).then(function(org){
+                        item.__affilDone = true;
+                        if (!org) return;
+                
+                        // Cache for future renders
+                        storeValue(orcidAffilPrefix, orcidId, org);
+                
+                        // 1) Patch any currently visible dropdown row that contains this ORCID
+                        $(".select2-results__option, .select2-result-label").each(function(){
+                            var $row = $(this);
+                            var t = $row.text() || "";
+                            if (t.indexOf(orcidId) !== -1 && t.indexOf(org) === -1) {
+                                appendAffilToNode($row, org);
+                            }
+                        });
+                
+                        // 2) Update this local node too
+                        appendAffilToNode($result, org);
+                    });
+                
+                    return $result;
                 },
                 language: {
                     searching: function(params) {
@@ -269,32 +294,36 @@ function updatePeopleInputs() {
                     },
                     success: function(person, status) {
                         var name = ((person.name['family-name']) ? person.name['family-name'].value + ", " : "") + person.name['given-names'].value;
-                        var displayElement = $('<span/>').text(name).append(
-                            $('<a/>').attr('href', orcidBaseUrl + id).attr('target', '_blank').attr('rel', 'noopener')
-                                     .html('<img alt="ORCID logo" src="https://info.orcid.org/wp-content/uploads/2019/11/orcid_16x16.png" width="16" height="16" />')
-                        );
+                        var text = name + "; " + id;
+                        if (person.emails && person.emails.email && person.emails.email.length > 0) {
+                            text = text + "; " + person.emails.email[0].email;
+                        }
                     
-                        // NEW: try cached affil; else fetch and append
+                        // Try cached affil; else fetch and append afterward
                         var cached = getValue(orcidAffilPrefix, id);
                         if (cached && cached.name) {
-                            displayElement.append(document.createTextNode(" — " + cached.name));
+                            text += " — " + cached.name;
+                            var newOption = new Option(text, id, true, true);
+                            newOption.title = 'Open in new tab to view ORCID page';
+                            $('#' + selectId).append(newOption).trigger('change');
                         } else {
+                            var newOption = new Option(text, id, true, true);
+                            newOption.title = 'Open in new tab to view ORCID page';
+                            $('#' + selectId).append(newOption).trigger('change');
+                    
                             fetchLatestEmployment(id).then(function(org){
                                 if (org) {
                                     storeValue(orcidAffilPrefix, id, org);
-                                    displayElement.append(document.createTextNode(" — " + org));
+                                    // Update the selected chip text (Select2 renders it separately)
+                                    var sel = $('#' + selectId).select2('data')[0];
+                                    if (sel && sel.text && sel.text.indexOf(org) === -1) {
+                                        sel.text = sel.text + " — " + org;
+                                        // Force re-render of selection
+                                        $('#' + selectId).trigger('change.select2');
+                                    }
                                 }
                             });
                         }
-                    
-                        $(personElement).hide();
-                        let sibs = $(personElement).siblings("[data-cvoc-index='" + $(personElement).attr('data-cvoc-index') + "']");
-                        if (sibs.length == 0) {
-                            displayElement.prependTo($(personElement).parent());
-                        } else {
-                            displayElement.insertBefore(sibs.eq(0));
-                        }
-                        storeValue(orcidPrefix, id, name);
                     },
                     error: function(jqXHR, textStatus, errorThrown) {
                         if (jqXHR.status != 404) {

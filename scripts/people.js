@@ -1,50 +1,53 @@
 var personSelector = "span[data-cvoc-protocol='orcid']";
 var personInputSelector = "input[data-cvoc-protocol='orcid']";
 var orcidPrefix = "orcid:";
+var orcidAffilPrefix = "orcid_affil:";
 
 $(document).ready(function() {
     expandPeople();
     updatePeopleInputs();
 });
 
-function fetchLatestEmployment(orcidBaseUrl, orcidId) {
-  // e.g., https://pub.orcid.org/v3.0/0000-0002-.../employments
-  var url = orcidBaseUrl.replace("https://","https://pub.") + "v3.0/" + orcidId + "/employments";
-  return $.ajax({
-    type: "GET",
-    url: url,
-    dataType: "json",
-    headers: { "Accept": "application/json" }
-  }).then(function(data){
-    if (!data || !data["employment-summary"] || data["employment-summary"].length === 0) return null;
+// Fetch latest/current employment org name from ORCID public API
+function fetchLatestEmployment(orcidId) {
+    var api = "https://pub.orcid.org/v3.0/" + orcidId + "/employments";
+    return $.ajax({
+        type: "GET",
+        url: api,
+        dataType: "json",
+        headers: { "Accept": "application/json" }
+    }).then(function(data) {
+        var list = data && data["employment-summary"] ? data["employment-summary"] : [];
+        if (!list || !list.length) return null;
 
-    // Choose current (no end-date) or latest end-date
-    var summaries = data["employment-summary"];
-    summaries.sort(function(a,b){
-      function endToNum(s){
-        if (!s || !s["end-date"]) return Number.MAX_SAFE_INTEGER; // current gets priority
-        var ed = s["end-date"];
-        var y = ed.year ? ed.year.value : "0000";
-        var m = ed.month ? ed.month.value : "00";
-        var d = ed.day ? ed.day.value : "00";
-        return Number(y + (m+"").padStart(2,"0") + (d+"").padStart(2,"0"));
-      }
-      return endToNum(a) - endToNum(b);
-    });
-    var latest = summaries[0];
-    return latest && latest.organization && latest.organization.name ? latest.organization.name : null;
-  }, function(){ return null; });
+        // Prefer "current" (no end-date). If none, pick the most recent by end-date/start-date.
+        function dnum(dt) {
+            if (!dt) return 0;
+            var y = (dt.year && dt.year.value) || "0000";
+            var m = (dt.month && dt.month.value) || "00";
+            var d = (dt.day && dt.day.value) || "00";
+            return Number(y + (m+"").padStart(2,"0") + (d+"").padStart(2,"0"));
+        }
+        var current = list.find(function(s){ return !s["end-date"]; });
+        if (current && current.organization && current.organization.name) {
+            return current.organization.name;
+        }
+        list.sort(function(a,b){
+            var ae = dnum(a["end-date"]) || dnum(a["start-date"]);
+            var be = dnum(b["end-date"]) || dnum(b["start-date"]);
+            return be - ae; // newest first
+        });
+        var latest = list[0];
+        return latest && latest.organization && latest.organization.name ? latest.organization.name : null;
+    }, function(){ return null; });
 }
 
-function appendAffilToNode($node, affil){
-  if (!affil) return;
-  // keep existing text, add an em-dash + affiliation (not part of the match span)
-  var hasTextNode = $node.contents().filter(function(){return this.nodeType === 3;}).first();
-  if (hasTextNode.length){
-    hasTextNode[0].nodeValue = hasTextNode[0].nodeValue + " — " + affil;
-  } else {
+function appendAffilToNode($node, affil) {
+    if (!affil) return;
+    var txt = $node.text();
+    if (txt.indexOf(affil) !== -1) return;
+    // Prefer appending as plain text to avoid disturbing the match-highlighting spans
     $node.append(document.createTextNode(" — " + affil));
-  }
 }
 
 function expandPeople() {
@@ -166,11 +169,20 @@ function updatePeopleInputs() {
                     return $result;
                 },
                 templateSelection: function(item) {
-                    //For a selection, add HTML to make the ORCID a link
                     var pos = item.text.search(/\d{4}-\d{4}-\d{4}-\d{3}[\dX]/);
+                    var aff = null;
+                    var orcid = null;
+                
                     if (pos >= 0) {
-                        var orcid = item.text.substr(pos, 19);
-                        return $('<span></span>').append(item.text.replace(orcid, "<a href='" + orcidBaseUrl + orcid + "' target='_blank'>" + orcid + "</a>"));
+                        orcid = item.text.substr(pos, 19);
+                        var cached = getValue(orcidAffilPrefix, (item.id || orcid));
+                        if (cached && cached.name) aff = cached.name;
+                
+                        var label = item.text.replace(orcid, "<a href='" + orcidBaseUrl + orcid + "' target='_blank'>" + orcid + "</a>");
+                        if (aff && label.indexOf(aff) === -1) {
+                            label = label + " — " + aff;
+                        }
+                        return $('<span></span>').append(label);
                     }
                     return item.text;
                 },
@@ -210,21 +222,20 @@ function updatePeopleInputs() {
                         }
                         return {
                             results: data['expanded-result']
-                                //Sort to bring recently used ORCIDS to the top of the list
                                 .sort((a, b) => Number(getValue(orcidPrefix, b['orcid-id']).name != null) - Number(getValue(orcidPrefix, a['orcid-id']).name != null))
-                                .map(
-                                    function(x) {
-                                        return {
-                                            text: ((x['family-names']) ? x['family-names'] + ", " : "") + x['given-names'] +
-                                                "; " +
-                                                x['orcid-id'] +
-                                                ((x.email.length > 0) ? "; " + x.email[0] : ""),
-                                            id: x['orcid-id'],
-                                            //Since clicking in the selection re-opens the choice list, one has to use a right click/open in new tab/window to view the ORCID page
-                                            //Using title to provide that hint as a popup
-                                            title: 'Open in new tab to view ORCID page'
-                                        }
-                                    })
+                                .map(function(x) {
+                                    var baseText = ((x['family-names']) ? x['family-names'] + ", " : "") + x['given-names'] +
+                                                   "; " + x['orcid-id'] +
+                                                   ((x.email.length > 0) ? "; " + x.email[0] : "");
+                                    // NEW: pull cached affiliation if present
+                                    var cached = getValue(orcidAffilPrefix, x['orcid-id']);
+                                    var affix = (cached && cached.name) ? (" — " + cached.name) : "";
+                                    return {
+                                        text: baseText + affix,
+                                        id: x['orcid-id'],
+                                        title: 'Open in new tab to view ORCID page'
+                                    };
+                                })
                         };
                     }
                 }
@@ -258,13 +269,32 @@ function updatePeopleInputs() {
                     },
                     success: function(person, status) {
                         var name = ((person.name['family-name']) ? person.name['family-name'].value + ", " : "") + person.name['given-names'].value;
-                        var text = name + "; " + id;
-                        if (person.emails.email.length > 0) {
-                            text = text + "; " + person.emails.email[0].email;
+                        var displayElement = $('<span/>').text(name).append(
+                            $('<a/>').attr('href', orcidBaseUrl + id).attr('target', '_blank').attr('rel', 'noopener')
+                                     .html('<img alt="ORCID logo" src="https://info.orcid.org/wp-content/uploads/2019/11/orcid_16x16.png" width="16" height="16" />')
+                        );
+                    
+                        // NEW: try cached affil; else fetch and append
+                        var cached = getValue(orcidAffilPrefix, id);
+                        if (cached && cached.name) {
+                            displayElement.append(document.createTextNode(" — " + cached.name));
+                        } else {
+                            fetchLatestEmployment(id).then(function(org){
+                                if (org) {
+                                    storeValue(orcidAffilPrefix, id, org);
+                                    displayElement.append(document.createTextNode(" — " + org));
+                                }
+                            });
                         }
-                        var newOption = new Option(text, id, true, true);
-                        newOption.title = 'Open in new tab to view ORCID page';
-                        $('#' + selectId).append(newOption).trigger('change');
+                    
+                        $(personElement).hide();
+                        let sibs = $(personElement).siblings("[data-cvoc-index='" + $(personElement).attr('data-cvoc-index') + "']");
+                        if (sibs.length == 0) {
+                            displayElement.prependTo($(personElement).parent());
+                        } else {
+                            displayElement.insertBefore(sibs.eq(0));
+                        }
+                        storeValue(orcidPrefix, id, name);
                     },
                     error: function(jqXHR, textStatus, errorThrown) {
                         if (jqXHR.status != 404) {

@@ -7,6 +7,46 @@ $(document).ready(function() {
     updatePeopleInputs();
 });
 
+function fetchLatestEmployment(orcidBaseUrl, orcidId) {
+  // e.g., https://pub.orcid.org/v3.0/0000-0002-.../employments
+  var url = orcidBaseUrl.replace("https://","https://pub.") + "v3.0/" + orcidId + "/employments";
+  return $.ajax({
+    type: "GET",
+    url: url,
+    dataType: "json",
+    headers: { "Accept": "application/json" }
+  }).then(function(data){
+    if (!data || !data["employment-summary"] || data["employment-summary"].length === 0) return null;
+
+    // Choose current (no end-date) or latest end-date
+    var summaries = data["employment-summary"];
+    summaries.sort(function(a,b){
+      function endToNum(s){
+        if (!s || !s["end-date"]) return Number.MAX_SAFE_INTEGER; // current gets priority
+        var ed = s["end-date"];
+        var y = ed.year ? ed.year.value : "0000";
+        var m = ed.month ? ed.month.value : "00";
+        var d = ed.day ? ed.day.value : "00";
+        return Number(y + (m+"").padStart(2,"0") + (d+"").padStart(2,"0"));
+      }
+      return endToNum(a) - endToNum(b);
+    });
+    var latest = summaries[0];
+    return latest && latest.organization && latest.organization.name ? latest.organization.name : null;
+  }, function(){ return null; });
+}
+
+function appendAffilToNode($node, affil){
+  if (!affil) return;
+  // keep existing text, add an em-dash + affiliation (not part of the match span)
+  var hasTextNode = $node.contents().filter(function(){return this.nodeType === 3;}).first();
+  if (hasTextNode.length){
+    hasTextNode[0].nodeValue = hasTextNode[0].nodeValue + " — " + affil;
+  } else {
+    $node.append(document.createTextNode(" — " + affil));
+  }
+}
+
 function expandPeople() {
     //Check each selected element
     $(personSelector).each(function() {

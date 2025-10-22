@@ -90,7 +90,7 @@ function expandPeople() {
                             displayElement.insertBefore(sibs.eq(0));
                         }
                         //Store the most recent ORCIDs - could cache results, but currently using this just to prioritized recently used ORCIDs in search results
-                        storeValue(orcidPrefix, id, name);
+                        storeValue(orcidAffilPrefix, orcidId, { name: org });
                     },
                     error: function(jqXHR, textStatus, errorThrown) {
                         //Treat as plain text

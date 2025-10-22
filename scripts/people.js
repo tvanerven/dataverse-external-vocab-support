@@ -160,16 +160,6 @@ function updatePeopleInputs() {
                 tags: $(personInput).data("cvoc-allowfreetext"),
                 delay: 500,
                 templateResult: function(item) {
-                    // No need to template the searching text
-                    if (item.loading) {
-                        return item.text;
-                    }
-
-                    //markMatch bolds the search term if/where it appears in the result
-                    var $result = markMatch(item.text, term);
-                    return $result;
-                },
-                templateResult: function(item) {
                     if (item.loading) { return item.text; }
                 
                     var $result = markMatch(item.text, term);

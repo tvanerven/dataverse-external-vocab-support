@@ -89,8 +89,6 @@ function expandPeople() {
                         } else {
                             displayElement.insertBefore(sibs.eq(0));
                         }
-                        //Store the most recent ORCIDs - could cache results, but currently using this just to prioritized recently used ORCIDs in search results
-                        storeValue(orcidAffilPrefix, orcidId, { name: org });
                     },
                     error: function(jqXHR, textStatus, errorThrown) {
                         //Treat as plain text
@@ -184,7 +182,7 @@ function updatePeopleInputs() {
                         if (!org) return;
                 
                         // Cache for future renders
-                        storeValue(orcidAffilPrefix, orcidId, { name: org });
+                        storeValue(orcidAffilPrefix, id, { name: org });
                 
                         // 1) Patch any currently visible dropdown row that contains this ORCID
                         $(".select2-results__option, .select2-result-label").each(function(){
@@ -237,7 +235,7 @@ function updatePeopleInputs() {
                         }
                         return {
                             results: data['expanded-result']
-                                .sort((a, b) => Number(getValue(orcidPrefix, b['orcid-id']).name != null) - Number(getValue(orcidPrefix, a['orcid-id']).name != null))
+                                .sort((a, b) => Number(((getValue(orcidPrefix, b['orcid-id']) || {}).name) != null) - Number(((getValue(orcidPrefix, a['orcid-id']) || {}).name) != null))
                                 .map(function(x) {
                                     var baseText = ((x['family-names']) ? x['family-names'] + ", " : "") + x['given-names'] +
                                                    "; " + x['orcid-id'] +

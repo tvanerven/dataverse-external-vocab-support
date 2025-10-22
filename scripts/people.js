@@ -184,7 +184,7 @@ function updatePeopleInputs() {
                         if (!org) return;
                 
                         // Cache for future renders
-                        storeValue(orcidAffilPrefix, orcidId, org);
+                        storeValue(orcidAffilPrefix, orcidId, { name: org });
                 
                         // 1) Patch any currently visible dropdown row that contains this ORCID
                         $(".select2-results__option, .select2-result-label").each(function(){
@@ -303,7 +303,7 @@ function updatePeopleInputs() {
                     
                             fetchLatestEmployment(id).then(function(org){
                                 if (org) {
-                                    storeValue(orcidAffilPrefix, id, org);
+                                    storeValue(orcidAffilPrefix, orcidId, { name: org });
                                     // Update the selected chip text (Select2 renders it separately)
                                     var sel = $('#' + selectId).select2('data')[0];
                                     if (sel && sel.text && sel.text.indexOf(org) === -1) {

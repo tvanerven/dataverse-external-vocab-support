@@ -1,55 +1,11 @@
 var personSelector = "span[data-cvoc-protocol='orcid']";
 var personInputSelector = "input[data-cvoc-protocol='orcid']";
 var orcidPrefix = "orcid:";
-var orcidAffilPrefix = "orcid_affil:";
-var term = "";
 
 $(document).ready(function() {
     expandPeople();
     updatePeopleInputs();
 });
-
-// Fetch latest/current employment org name from ORCID public API
-function fetchLatestEmployment(orcidId) {
-    var api = "https://pub.orcid.org/v3.0/" + orcidId + "/employments";
-    return $.ajax({
-        type: "GET",
-        url: api,
-        dataType: "json",
-        headers: { "Accept": "application/json" }
-    }).then(function(data) {
-        var list = data && data["employment-summary"] ? data["employment-summary"] : [];
-        if (!list || !list.length) return null;
-
-        // Prefer "current" (no end-date). If none, pick the most recent by end-date/start-date.
-        function dnum(dt) {
-            if (!dt) return 0;
-            var y = (dt.year && dt.year.value) || "0000";
-            var m = (dt.month && dt.month.value) || "00";
-            var d = (dt.day && dt.day.value) || "00";
-            return Number(y + (m+"").padStart(2,"0") + (d+"").padStart(2,"0"));
-        }
-        var current = list.find(function(s){ return !s["end-date"]; });
-        if (current && current.organization && current.organization.name) {
-            return current.organization.name;
-        }
-        list.sort(function(a,b){
-            var ae = dnum(a["end-date"]) || dnum(a["start-date"]);
-            var be = dnum(b["end-date"]) || dnum(b["start-date"]);
-            return be - ae; // newest first
-        });
-        var latest = list[0];
-        return latest && latest.organization && latest.organization.name ? latest.organization.name : null;
-    }, function(){ return null; });
-}
-
-function appendAffilToNode($node, affil) {
-    if (!affil) return;
-    var txt = $node.text();
-    if (txt.indexOf(affil) !== -1) return;
-    // Prefer appending as plain text to avoid disturbing the match-highlighting spans
-    $node.append(document.createTextNode(" — " + affil));
-}
 
 function expandPeople() {
     //Check each selected element
@@ -89,6 +45,8 @@ function expandPeople() {
                         } else {
                             displayElement.insertBefore(sibs.eq(0));
                         }
+                        //Store the most recent ORCIDs - could cache results, but currently using this just to prioritized recently used ORCIDs in search results
+                        storeValue(orcidPrefix, id, name);
                     },
                     error: function(jqXHR, textStatus, errorThrown) {
                         //Treat as plain text
@@ -158,46 +116,23 @@ function updatePeopleInputs() {
                 tags: $(personInput).data("cvoc-allowfreetext"),
                 delay: 500,
                 templateResult: function(item) {
-                    if (item.loading) { return item.text; }
-                
-                    var $result = markMatch(item.text, term);
-                
-                    // Prefer item.id (you set it to the ORCID) else regex fallback
-                    var orcidId = item.id || (item.text && (item.text.match(/\d{4}-\d{4}-\d{4}-\d{3}[\dX]/) || [])[0]);
-                    if (!orcidId) return $result;
-                
-                    // If cached, append immediately
-                    var cached = getValue(orcidAffilPrefix, orcidId);
-                    if (cached && cached.name) {
-                        appendAffilToNode($result, cached.name);
-                        return $result;
+                    // No need to template the searching text
+                    if (item.loading) {
+                        return item.text;
                     }
-                
-                    // Avoid duplicate lookups per item
-                    if (item.__affilPending || item.__affilDone) return $result;
-                
-                    item.__affilPending = true;
-                    fetchLatestEmployment(orcidId).then(function(org){
-                        item.__affilDone = true;
-                        if (!org) return;
-                
-                        // Cache for future renders
-                        storeValue(orcidAffilPrefix, id, { name: org });
-                
-                        // 1) Patch any currently visible dropdown row that contains this ORCID
-                        $(".select2-results__option, .select2-result-label").each(function(){
-                            var $row = $(this);
-                            var t = $row.text() || "";
-                            if (t.indexOf(orcidId) !== -1 && t.indexOf(org) === -1) {
-                                appendAffilToNode($row, org);
-                            }
-                        });
-                
-                        // 2) Update this local node too
-                        appendAffilToNode($result, org);
-                    });
-                
+
+                    //markMatch bolds the search term if/where it appears in the result
+                    var $result = markMatch(item.text, term);
                     return $result;
+                },
+                templateSelection: function(item) {
+                    //For a selection, add HTML to make the ORCID a link
+                    var pos = item.text.search(/\d{4}-\d{4}-\d{4}-\d{3}[\dX]/);
+                    if (pos >= 0) {
+                        var orcid = item.text.substr(pos, 19);
+                        return $('<span></span>').append(item.text.replace(orcid, "<a href='" + orcidBaseUrl + orcid + "' target='_blank'>" + orcid + "</a>"));
+                    }
+                    return item.text;
                 },
                 language: {
                     searching: function(params) {
@@ -235,16 +170,27 @@ function updatePeopleInputs() {
                         }
                         return {
                             results: data['expanded-result']
-                                .sort((a, b) => Number(((getValue(orcidPrefix, b['orcid-id']) || {}).name) != null) - Number(((getValue(orcidPrefix, a['orcid-id']) || {}).name) != null))
-                                .map(function(x) {
-                                    var baseText = ((x['family-names']) ? x['family-names'] + ", " : "") + x['given-names'] +
-                                                   "; " + x['orcid-id'] +
-                                                   ((x.email.length > 0) ? "; " + x.email[0] : "");
-                                    // NEW: pull cached affiliation if present
-                                    var cached = getValue(orcidAffilPrefix, x['orcid-id']);
-                                    var affix = (cached && cached.name) ? (" — " + cached.name) : "";
+                                //Sort to bring recently used ORCIDS to the top of the list
+                                .sort((a, b) => Number(getValue(orcidPrefix, b['orcid-id']).name != null) - Number(getValue(orcidPrefix, a['orcid-id']).name != null))
+                                .map(function (x) {
+                                    // Build base text: "Family, Given; ORCID; email"
+                                    var baseText =
+                                        ((x['family-names']) ? x['family-names'] + ", " : "") +
+                                        x['given-names'] +
+                                        "; " +
+                                        x['orcid-id'] +
+                                        ((x.email && x.email.length > 0) ? "; " + x.email[0] : "");
+
+                                    // NEW: take the first institution-name if present
+                                    var inst = (Array.isArray(x['institution-name']) && x['institution-name'].length > 0)
+                                        ? x['institution-name'][0]
+                                        : null;
+
+                                    // Append " — <institution>" only if present
+                                    var text = inst ? (baseText + " — " + inst) : baseText;
+
                                     return {
-                                        text: baseText + affix,
+                                        text: text,
                                         id: x['orcid-id'],
                                         title: 'Open in new tab to view ORCID page'
                                     };
@@ -283,35 +229,12 @@ function updatePeopleInputs() {
                     success: function(person, status) {
                         var name = ((person.name['family-name']) ? person.name['family-name'].value + ", " : "") + person.name['given-names'].value;
                         var text = name + "; " + id;
-                        if (person.emails && person.emails.email && person.emails.email.length > 0) {
+                        if (person.emails.email.length > 0) {
                             text = text + "; " + person.emails.email[0].email;
                         }
-                    
-                        // Try cached affil; else fetch and append afterward
-                        var cached = getValue(orcidAffilPrefix, id);
-                        if (cached && cached.name) {
-                            text += " — " + cached.name;
-                            var newOption = new Option(text, id, true, true);
-                            newOption.title = 'Open in new tab to view ORCID page';
-                            $('#' + selectId).append(newOption).trigger('change');
-                        } else {
-                            var newOption = new Option(text, id, true, true);
-                            newOption.title = 'Open in new tab to view ORCID page';
-                            $('#' + selectId).append(newOption).trigger('change');
-                    
-                            fetchLatestEmployment(id).then(function(org){
-                                if (org) {
-                                    storeValue(orcidAffilPrefix, orcidId, { name: org });
-                                    // Update the selected chip text (Select2 renders it separately)
-                                    var sel = $('#' + selectId).select2('data')[0];
-                                    if (sel && sel.text && sel.text.indexOf(org) === -1) {
-                                        sel.text = sel.text + " — " + org;
-                                        // Force re-render of selection
-                                        $('#' + selectId).trigger('change.select2');
-                                    }
-                                }
-                            });
-                        }
+                        var newOption = new Option(text, id, true, true);
+                        newOption.title = 'Open in new tab to view ORCID page';
+                        $('#' + selectId).append(newOption).trigger('change');
                     },
                     error: function(jqXHR, textStatus, errorThrown) {
                         if (jqXHR.status != 404) {

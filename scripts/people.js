@@ -183,7 +183,7 @@ function updatePeopleInputs() {
 
                                     // NEW: take the first institution-name if present
                                     var inst = (Array.isArray(x['institution-name']) && x['institution-name'].length > 0)
-                                        ? x['institution-name'][0]
+                                        ? x['institution-name'].length - 1]
                                         : null;
 
                                     // Append " — <institution>" only if present

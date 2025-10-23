@@ -181,9 +181,9 @@ function updatePeopleInputs() {
                                         x['orcid-id'] +
                                         ((x.email && x.email.length > 0) ? "; " + x.email[0] : "");
 
-                                    // NEW: take the first institution-name if present
+                                    // NEW: take the last institution-name if present
                                     var inst = (Array.isArray(x['institution-name']) && x['institution-name'].length > 0)
-                                        ? x['institution-name'].length - 1]
+                                        ? x['institution-name'][x['institution-name'].length - 1]
                                         : null;
 
                                     // Append " — <institution>" only if present
